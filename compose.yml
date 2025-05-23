@@ -1,0 +1,186 @@
+services:
+# app -----------------------------------
+  app_apache:
+    image: apache_movies_images:1.0
+    build:
+      context: app_apache
+    #ports:
+    #  - "8082:80"
+    networks:
+      - default
+    deploy:
+      replicas: 3 
+
+  #  Create a MongoDB cluster with Docker
+  #  https://www.mongodb.com/resources/products/compatibilities/deploying-a-mongodb-cluster-with-docker
+  app_Mongo_db:
+    image: mongo:7.0.14
+    ports:
+      - "27017:27017"
+    networks:
+      - netw_app
+    volumes:
+      - mongo_db-vol:/data/db
+    #healthcheck:
+    #  test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+    #  interval: 30s
+    #  timeout: 5s
+    #  retries: 5
+
+  app_Neo4j_db:
+    image: neo4j:5.24.2
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=none
+    networks:
+      - netw_app
+    volumes:
+      - neo4j_db-vol:/data
+    #healthcheck:
+    #  test: ["CMD", "curl", "-sS", "http://localhost:7474"]
+    #  interval: 30s
+    #  timeout: 15s
+    #  retries: 5
+  app_redis_cache:
+    image: app_redis_srv1:1.0
+    build: 
+      context: app_redis_srv1
+    ports:
+      - "7000:7000"
+    networks:
+      - netw_app
+    #healthcheck:
+    #  test: ["CMD", "redis-cli", "ping"]
+    #  interval: 30s
+    #  timeout: 30s
+    #  retries: 5
+    #  start_period: 30s
+  app_SMTP:
+    image: namshi/smtp
+    #ports:
+    #  - "1025:1025"
+    networks:
+      - netw_app
+  
+
+  app_CoreApp:
+    image: core_app:1.0
+    build:
+      context: app_CoreApp
+    ports:
+      - "8081:5000"
+    environment:
+      - MOVIES_MONGODB_CONFIG_URI=mongodb://app_Mongo_db:27017/
+      - MOVIES_NEO4J_HOST=neo4j://app_Neo4j_db
+      - MOVIES_REDIS_HOST=app_redis_cache
+      - MOVIES_REDIS_PORT=7000
+    depends_on:
+      - app_Mongo_db
+      - app_Neo4j_db
+      - app_redis_cache
+      - app_SMTP
+      #app_Mongo_db:
+      #  condition: service_healthy
+      #app_Neo4j_db:
+      #  condition: service_healthy
+      #app_redis_cache:
+      #  condition: service_healthy
+    networks:
+      - netw_app
+      - default
+
+# basic ---------------------------------  
+  basic_nginx_apache:
+    image: basic_web:1.0
+    build:
+      context: basic_web
+    ports:
+      - "8080:80"
+    depends_on:
+      - app_apache
+      - app_CoreApp
+    #  - app_extraService
+      - atenea_moodle
+    networks:
+      - default
+
+  nginx_reverse:
+    build:
+      context: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+      - "7443:7443"
+    depends_on:
+      - app_CoreApp
+    networks:
+      - netw_app
+
+  basic_nfs:
+    build:
+      context: ./basic_NFS
+    container_name: basic_NFS
+    privileged: true
+    ports:
+      - "2049:2049"
+      - "1111:111"
+      - "1111:111/udp"  #      
+    volumes:
+      - nfs:/storage
+    networks:
+      - netw_app
+      - default
+
+ # atenea -------------------------------
+  atenea_db:
+    image: docker.io/bitnami/mariadb:11.4
+    environment:
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - ALLOW_EMPTY_PASSWORD=yes
+      - MARIADB_USER=bn_moodle
+      - MARIADB_DATABASE=bitnami_moodle
+      - MARIADB_CHARACTER_SET=utf8mb4
+      - MARIADB_COLLATE=utf8mb4_unicode_ci
+    volumes:
+      - 'atenea_mariadb_data:/bitnami/mariadb'
+    networks:
+      - network_moodle
+  atenea_moodle:
+    image: docker.io/bitnami/moodle:4.5
+    ports:
+      - '8086:8080'
+      - '4443:8443'
+    environment:
+      - MOODLE_DATABASE_HOST=atenea_db
+      - MOODLE_DATABASE_PORT_NUMBER=3306
+      - MOODLE_DATABASE_USER=bn_moodle
+      - MOODLE_DATABASE_NAME=bitnami_moodle
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - ALLOW_EMPTY_PASSWORD=yes
+    volumes:
+      - 'moodle_data:/bitnami/moodle'
+      - 'moodledata_data:/bitnami/moodledata'
+    depends_on:
+      - atenea_db
+    networks:
+      - network_moodle
+      - default
+
+networks:
+  netw_app:
+  network_moodle:
+
+volumes:
+  mongo_db-vol:
+  neo4j_db-vol:
+
+  atenea_mariadb_data:
+    driver: local
+  moodle_data:
+    driver: local
+  moodledata_data:
+    driver: local
+  nfs:
+
